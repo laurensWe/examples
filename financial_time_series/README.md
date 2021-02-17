@@ -13,64 +13,49 @@ There are two primary goals for this tutorial:
 
 By the end of this tutorial, you should learn how to:
 
-*   Setup a Kubeflow cluster 
-*   Spawn a Jupyter Notebook on the cluster
+*   Spawn a Jupyter Notebook on AI Platform
 *   Train a time-series model using TensorFlow and GPUs on the cluster
 *   Serve the model using [TF Serving](https://www.kubeflow.org/docs/components/serving/tfserving_new/)
 *   Query the model via your local machine
 *   Automate the steps 1/ preprocess, 2/ train and 3/ model deployment through a kubeflow pipeline
 
 ### Pre-requisites
-You can use a Google Cloud Shell to follow the steps outlined below.
-In that case you can skip the requirements below as these depencies are pre-installed.
-You might also need to install ```uuid-runtime``` via ```sudo apt-get install uuid-runtime```.
+You can use a Google Cloud Shell to follow the steps outlined below or through your own private AI Platform notebook
+as it is more convenient to inspect the kubeflow pipelines code within a Jupyter notebook.
 
-Alternatively, you can work from your local environment.
-In that case you will need a Linux or Mac environment with Python 3.6.x and install the [Cloud SDK](https://cloud.google.com/sdk/).
+#### Setting up your private AI Platform Notebook
+To set-up your notebook, go into the Cloud Shell and execute the following code (make sure to change <YOUR_NAME> from 
+the INSTANCE_NAME variable): 
+```
+export IMAGE_FAMILY="tf2-ent-latest-cpu"
+export ZONE="europe-west1-d"
+export INSTANCE_NAME="ai-notebook-<YOUR_NAME>"
+export INSTANCE_TYPE="n1-standard-4"
+export SUBNETWORK="https://www.googleapis.com/compute/v1/projects/custom-altar-304912/regions/europe-west1/subnetworks/europe-subnet"
+export PROJECT_ID="custom-altar-304912"
 
-Independent of the machine that you are using, you will need access to a Google Cloud Project and its GKE resources.
+gcloud compute instances create $INSTANCE_NAME \
+  --zone=$ZONE \
+  --project=$PROJECT_ID \
+  --machine-type=$INSTANCE_TYPE \
+  --image-family=$IMAGE_FAMILY \
+  --image-project=deeplearning-platform-release \
+  --subnet=$SUBNETWORK \
+  --no-address \
+  --tags=deeplearning-vm \
+  --scopes=https://www.googleapis.com/auth/cloud-platform \
+  --metadata='proxy-mode=project_editors'
+```
 
-### Deploying Kubeflow on GKE
-Please follow the instructions on how to deploy Kubeflow to GKE on the 
-[Deploy using CLI](https://www.kubeflow.org/docs/gke/deploy/deploy-cli/) page with the following exceptions:
-
-- After the step `kfctl build -V -f ${CONFIG_URI}` make sure you add 
-'https://www.googleapis.com/auth/cloud-platform' to the `VM_OAUTH_SCOPES` in the file `{KF_NAME}/gcp_config/cluster.ninja`. This will allow the machines to make use of the BigQuery API, which we need for our use case as the data is stored in BigQuery, and to store data on Google Cloud Storage. 
-- After the step `kfctl build -V -f ${CONFIG_URI}` make sure you set `enableNodeAutoprovisioning` to false in  `{KF_NAME}/gcp_config/cluster-kubeflow.yaml` as we will work with our dedicated gpu-pool that Kubeflow deployment foresees. 
-The [node autoprovisioning](https://cloud.google.com/kubernetes-engine/docs/how-to/node-auto-provisioning) can be useful to autoscale the cluster with non-user defined node pools.
+You can't do the above step in the UI of GCP because of private ip address which is not standard for new notebooks.
 
 
-### Cloning the Examples 
+#### Cloning the Examples 
 
 Clone the examples repository and change directory to the financial time series example:
 ```
 git clone https://github.com/kubeflow/examples.git
 cd examples/financial_time_series/
-```
-
-### Explore the Kubeflow UI
-After some time (about 10-15 minutes), an endpoint should now be available at `https://<KF_NAME>.endpoints.<project_id>.cloud.goog/`.
-From this page you can navigate between the different Kubeflow components.
-
-### Exploration via Jupyter Hub
-The [JupyterHub](https://github.com/jupyterhub/jupyterhub) component of Kubeflow allows us to spin up Jupyter Notebooks quite easily. 
-In the notebook we will investigate the data and start building a feasible machine learning model for the specific problem.
-
-From the Kubeflow starting page, you can click on the `Notebook Servers` tab.
-Make sure you select a namespace on the top left and hit the 'new server' 
-button. You can just fill in an appropiate name and leave all the options to 
-the defaults. You can simply upload the [notebook](https://github.com/kubeflow/examples/blob/master/financial_time_series/Financial%20Time%20Series%20with%20Finance%20Data.ipynb) and walk through it step by step to better understand the problem and suggested solution(s).
-In this example, the goal is not focus on the notebook itself but rather on how this notebook is being translated in more scalable training jobs and later on serving.
-
-### Training at scale with TF-jobs
-The next step is to 're-factor' the notebook code into Python scripts which can then be containerized onto a Docker image.
-In the folder ```tensorflow-model``` you can find these scripts together with a ```Dockerfile```.
-Subsequently we will build a docker image on Google Cloud by running following command:
-
-```
-cd tensorflow_model/
-export TRAIN_PATH=gcr.io/<project>/<image-name>/cpu:v1
-gcloud builds submit --tag $TRAIN_PATH .
 ```
 
 We will create a bucket to store our data and model artifacts:
@@ -80,6 +65,8 @@ We will create a bucket to store our data and model artifacts:
 BUCKET_NAME=<your-bucket-name>
 gsutil mb gs://$BUCKET_NAME/
 ```
+
+### Launching the training job (without Kubeflow Pipelines)
 
 Now that we have an image ready on Google Cloud Container Registry, it's time we start launching a training job.
 Please have a look at the tfjob resource in `CPU/tfjob1.yaml` and update the 
@@ -92,7 +79,7 @@ Next we can launch the tf-job to our Kubeflow cluster and follow the progress vi
 
 ```
 kubectl apply -f CPU/tfjob1.yaml
-POD_NAME=$(kubectl get pods -n kubeflow --selector=tf-job-name=tfjob-flat \
+POD_NAME=$(kubectl get pods -n default --selector=tf-job-name=tfjob-flat \
       --template '{{range .items}}{{.metadata.name}}{{"\n"}}{{end}}')
 kubectl logs -f $POD_NAME -n kubeflow
 ```
@@ -212,6 +199,12 @@ kubectl logs -f $POD_NAME -n kubeflow
 ```
 
 ### Kubeflow Pipelines
+
+*In case the above steps between pre-requisites and kubeflow pipelines have been skipped change the image names in the yaml files to the following:* 
+
+- set the image to gcr.io/custom-altar-304912/tensorflow/cpu:v1 for the cpu yamls 
+- set the image to gcr.io/custom-altar-304912/tensorflow/gpu:v1 for the gpu yaml.
+
 Up to now, we clustered the preprocessing, training and deploy in a single script to illustrate the TFJobs.
 In practice, most often the preprocessing, training and deploy step will separated and they will need to run sequentially.
 Kubeflow pipelines offers an easy way of chaining these steps together and we will illustrate that here.
@@ -254,7 +247,3 @@ Note that you can also see the accuracy metrics across the different runs from t
 Also check that the more advanced model surpassed the accuracy threshold and was deployed by TF-serving.
 ![Pipeline UI](./docs/img/run_with_deploy.png)
 
-
-### Clean up
-To clean up, follow the instructions ['Delete using CLI'](https://www.kubeflow.org/docs/gke/deploy/delete-cli/) so that all components are 
-deleted in a correct manner.
