@@ -200,11 +200,6 @@ kubectl logs -f $POD_NAME -n kubeflow
 
 ### Kubeflow Pipelines
 
-*In case the above steps between pre-requisites and kubeflow pipelines have been skipped change the image names in the yaml files to the following:* 
-
-- set the image to gcr.io/custom-altar-304912/tensorflow/cpu:v1 for the cpu yamls 
-- set the image to gcr.io/custom-altar-304912/tensorflow/gpu:v1 for the gpu yaml.
-
 Up to now, we clustered the preprocessing, training and deploy in a single script to illustrate the TFJobs.
 In practice, most often the preprocessing, training and deploy step will separated and they will need to run sequentially.
 Kubeflow pipelines offers an easy way of chaining these steps together and we will illustrate that here.
@@ -214,6 +209,8 @@ We will also introduce a condition that we will only deploy the model if the acc
 
 Kubeflow Pipelines asks us to compile our pipeline Python3 file into a domain-specific-language. 
 We do that with a tool called dsl-compile that comes with the Python3 SDK. So, first install that SDK:
+
+with the cpu image being: `gcr.io/custom-altar-304912/tensorflow/cpu:v10`
 
 ```
 pip3 install python-dateutil kfp==0.1.36
